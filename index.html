@@ -51,28 +51,40 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "196783369517",
   appId: "1:196783369517:web:ede3d7dbbd5b640501b7a4"
 };
-/* =========================================================================== */
+/* ======================================== */
 
-const MAT=["Italiano","Storia","Matematica","Inglese","Economia aziendale","Economia politica","Diritto","Motoria","Informatica"];
-let CODE="",D={},T=0,cur=null,edit=null,del=null,ex=false,err="",msg="",nuovo="",st="",fb=null,ref=null,unsub=null;
+// M = elenco delle materie: [{n:"Nome", l:[{v:voto, p:peso}, ...]}, ...]
+let CODE="",M=[],T=0,cur=null,edit=null,del=null,dm=false,ex=false,err="",e2="",msg="",nuovo="",st="",fb=null,ref=null,unsub=null;
 try{CODE=localStorage.getItem("voti-code")||""}catch(e){}
 
 const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const norm=s=>s.toLowerCase().replace(/[^a-z0-9]/g,"");
 const fmt=c=>c.replace(/(.{4})/g,"$1-").replace(/-$/,"");
 const f2=x=>x===null?"–":x.toFixed(2);
-function emptyD(){const o={};MAT.forEach(m=>o[m]=[]);return o}
+const okV=y=>y&&typeof y.v==="number"&&typeof y.p==="number";
+
+// Legge i dati nel formato nuovo {m:[...]} oppure in quello vecchio {Materia:[...]}
+function parse(o){
+  const out=[];
+  if(o&&Array.isArray(o.m)){
+    o.m.forEach(x=>{if(x&&typeof x.n==="string"&&Array.isArray(x.l))out.push({n:x.n,l:x.l.filter(okV)})});
+  }else if(o&&typeof o==="object"){
+    Object.keys(o).forEach(k=>{if(Array.isArray(o[k]))out.push({n:k,l:o[k].filter(okV)})});
+  }
+  return out;
+}
 function loadLocal(){
-  D=emptyD();T=0;
+  M=[];T=0;
   try{
     const s=localStorage.getItem("voti-d-"+CODE);
-    if(s){const o=JSON.parse(s);MAT.forEach(m=>{if(Array.isArray(o[m]))D[m]=o[m]})}
+    if(s)M=parse(JSON.parse(s));
     T=parseInt(localStorage.getItem("voti-t-"+CODE))||0;
   }catch(e){}
 }
-function loc(){try{localStorage.setItem("voti-d-"+CODE,JSON.stringify(D));localStorage.setItem("voti-t-"+CODE,String(T))}catch(e){}}
+function loc(){try{localStorage.setItem("voti-d-"+CODE,JSON.stringify({m:M}));localStorage.setItem("voti-t-"+CODE,String(T))}catch(e){}}
 function avg(l){if(!l.length)return null;let s=0,w=0;l.forEach(x=>{s+=x.v*x.p;w+=x.p});return s/w}
-function gen(){const a=MAT.map(m=>avg(D[m])).filter(x=>x!==null);return a.length?a.reduce((x,y)=>x+y,0)/a.length:null}
+function gen(){const a=M.map(m=>avg(m.l)).filter(x=>x!==null);return a.length?a.reduce((x,y)=>x+y,0)/a.length:null}
 function setSt(s){st=s;const e=$("st");if(e)e.textContent=s}
 
 /* ---------- sincronizzazione ---------- */
@@ -80,7 +92,6 @@ async function connect(){
   if(unsub){unsub();unsub=null}
   ref=null;
   if(!CODE)return;
-  if(FIREBASE_CONFIG.apiKey==="INCOLLA_QUI"){setSt("Firebase non configurato: i voti restano solo su questo dispositivo");return}
   setSt("Sincronizzazione…");
   try{
     if(!fb){
@@ -93,8 +104,8 @@ async function connect(){
       if(s.exists()){
         const r=s.data();
         if(r.t>T){
-          MAT.forEach(m=>{D[m]=(r.d&&Array.isArray(r.d[m]))?r.d[m]:[]});
-          T=r.t;loc();
+          M=parse(r.d);T=r.t;loc();
+          if(cur!==null&&cur>=M.length)cur=null;
           const a=document.activeElement;
           if(!a||a.tagName!=="INPUT")render();
         }else if(T>r.t){push();return}
@@ -105,7 +116,7 @@ async function connect(){
 }
 function push(){
   if(!ref)return;
-  fb.F.setDoc(ref,{d:D,t:T}).then(()=>setSt("☁️ Sincronizzato")).catch(()=>setSt("Salvataggio online non riuscito"));
+  fb.F.setDoc(ref,{d:{m:M},t:T}).then(()=>setSt("☁️ Sincronizzato")).catch(()=>setSt("Salvataggio online non riuscito"));
 }
 function save(){T=Date.now();loc();push()}
 
@@ -121,43 +132,65 @@ function render(){
     }
     h+='<div class="card"><b>Ho già un codice</b><div style="margin:10px 0"><input id="cd" placeholder="xxxx-xxxx-xxxx" autocapitalize="none" autocomplete="off"></div><div class="err">'+err+'</div><button onclick="entra()">Entra</button></div>';
   }else if(cur===null){
-    let n=0;MAT.forEach(m=>n+=D[m].length);
+    let n=0;M.forEach(m=>n+=m.l.length);
     h+='<h1>Media voti</h1><div class="card"><div class="muted">Media generale</div><div class="big">'+f2(gen())+'</div><div class="muted">'+n+' voti inseriti</div></div>';
-    MAT.forEach((m,i)=>{
-      h+='<button class="mat" onclick="go('+i+')"><div class="row"><div><b>'+m+'</b><div class="muted">'+D[m].length+' voti</div></div><div class="avg">'+f2(avg(D[m]))+'</div></div></button>';
+    if(!M.length)h+='<p class="muted">Non hai ancora materie: aggiungi la prima qui sotto.</p>';
+    M.forEach((m,i)=>{
+      h+='<button class="mat" onclick="go('+i+')"><div class="row"><div><b>'+esc(m.n)+'</b><div class="muted">'+m.l.length+' voti</div></div><div class="avg">'+f2(avg(m.l))+'</div></div></button>';
     });
+    h+='<div class="card"><b>Nuova materia</b><div style="margin:10px 0"><input id="nm" placeholder="Es. Storia" maxlength="40" autocomplete="off"></div><div class="err">'+e2+'</div><button class="p" onclick="addM()">Aggiungi materia</button></div>';
     h+='<div class="muted" id="st" style="margin:0 4px 12px">'+st+'</div>';
     h+='<div class="card"><details><summary>Codice e backup</summary><p class="muted">Il tuo codice:</p><div class="code">'+fmt(CODE)+'</div>';
     h+='<p class="muted">Backup: crea il testo e conservalo, oppure incollalo qui e premi Importa.</p><textarea id="bk"></textarea><div class="g" style="margin:8px 0"><button class="s" onclick="exp()">Crea backup</button><button class="s" onclick="imp()">Importa</button></div><div class="muted" id="bm">'+msg+'</div>';
     h+='<div style="margin-top:12px"><button class="s d" onclick="esci()">'+(ex?'Sicuro? Annota prima il codice':'Cambia codice / esci')+'</button></div></details></div>';
   }else{
-    const m=MAT[cur],l=D[m];
-    h+='<button class="s" onclick="go(null)">← Indietro</button><h1 style="margin-top:12px">'+m+'</h1>';
+    const m=M[cur],l=m.l;
+    h+='<button class="s" onclick="go(null)">← Indietro</button><h1 style="margin-top:12px">'+esc(m.n)+'</h1>';
     h+='<div class="card"><div class="muted">Media materia</div><div class="big">'+f2(avg(l))+'</div></div>';
     h+='<div class="card"><b>'+(edit===null?'Nuovo voto':'Modifica voto')+'</b><div class="f" style="margin-top:10px"><div><label>Voto (0-10)</label><input id="v" inputmode="decimal" value="'+(edit!==null?l[edit].v:'')+'"></div><div><label>Peso % (1-100)</label><input id="p" inputmode="decimal" value="'+(edit!==null?l[edit].p:'100')+'"></div></div><div class="err">'+err+'</div><div class="g"><button class="p" onclick="sv()">'+(edit===null?'Aggiungi':'Salva modifica')+'</button>'+(edit!==null?'<button onclick="annulla()">Annulla</button>':'')+'</div></div>';
     if(!l.length)h+='<p class="muted">Nessun voto per questa materia.</p>';
     l.forEach((x,i)=>{
       h+='<div class="card"><div class="row"><div><span class="avg">'+x.v+'</span> <span class="muted">peso '+x.p+'%</span></div><div class="g"><button class="s" onclick="ed('+i+')">Modifica</button><button class="s d" onclick="dl('+i+')">'+(del===i?'Sicuro?':'Elimina')+'</button></div></div></div>';
     });
+    h+='<div class="card"><details'+(e2||dm?' open':'')+'><summary>Modifica materia</summary><div style="margin:10px 0"><label>Nome</label><input id="rn" value="'+esc(m.n)+'" maxlength="40"></div><div class="err">'+e2+'</div><div class="g"><button class="s" onclick="renM()">Rinomina</button><button class="s d" onclick="delM()">'+(dm?'Sicuro? Cancella anche i voti':'Elimina materia')+'</button></div></details></div>';
   }
   $("app").innerHTML=h;
 }
 
 /* ---------- azioni ---------- */
-function go(i){cur=i;edit=null;del=null;err="";render();window.scrollTo(0,0)}
+function go(i){cur=i;edit=null;del=null;dm=false;err="";e2="";render();window.scrollTo(0,0)}
 function num(id){return parseFloat($(id).value.replace(",","."))}
+function nomeOk(v,skip){
+  if(!v)return "Scrivi il nome della materia.";
+  if(M.some((m,i)=>i!==skip&&m.n.toLowerCase()===v.toLowerCase()))return "Esiste già una materia con questo nome.";
+  return "";
+}
+function addM(){
+  const v=$("nm").value.trim(),e=nomeOk(v,-1);
+  if(e){e2=e;render();return}
+  M.push({n:v,l:[]});e2="";save();render();
+}
+function renM(){
+  const v=$("rn").value.trim(),e=nomeOk(v,cur);
+  if(e){e2=e;render();return}
+  M[cur].n=v;e2="";save();render();
+}
+function delM(){
+  if(!dm){dm=true;render();return}
+  M.splice(cur,1);dm=false;cur=null;save();render();
+}
 function sv(){
   const v=num("v"),p=num("p");
   if(isNaN(v)||v<0||v>10){err="Il voto deve essere tra 0 e 10.";render();return}
   if(isNaN(p)||p<1||p>100){err="Il peso deve essere tra 1 e 100.";render();return}
-  const l=D[MAT[cur]];
+  const l=M[cur].l;
   if(edit===null)l.push({v:v,p:p});else l[edit]={v:v,p:p};
   edit=null;err="";save();render();
 }
 function annulla(){edit=null;err="";render()}
 function ed(i){edit=i;del=null;err="";render();window.scrollTo(0,0)}
 function dl(i){
-  if(del===i){D[MAT[cur]].splice(i,1);del=null;save()}else del=i;
+  if(del===i){M[cur].l.splice(i,1);del=null;save()}else del=i;
   render();
 }
 function creaCodice(){
@@ -176,27 +209,26 @@ function entra(c){
 function esci(){
   if(!ex){ex=true;render();return}
   if(unsub){unsub();unsub=null}
-  ref=null;ex=false;CODE="";D=emptyD();cur=null;st="";
+  ref=null;ex=false;CODE="";M=[];cur=null;st="";
   try{localStorage.removeItem("voti-code")}catch(e){}
   render();
 }
 function exp(){
-  const t=$("bk");t.value=JSON.stringify(D);t.select();
+  const t=$("bk");t.value=JSON.stringify({m:M});t.select();
   try{document.execCommand("copy");$("bm").textContent="Backup creato e copiato."}catch(e){$("bm").textContent="Backup creato: copialo a mano."}
 }
 function imp(){
   try{
-    const o=JSON.parse($("bk").value);let ok=false;
-    MAT.forEach(m=>{if(Array.isArray(o[m])){D[m]=o[m].filter(x=>x&&typeof x.v==="number"&&typeof x.p==="number");ok=true}});
-    if(!ok)throw 0;
-    save();msg="Backup importato.";render();
+    const r=parse(JSON.parse($("bk").value));
+    if(!r.length)throw 0;
+    M=r;save();msg="Backup importato.";render();
   }catch(e){$("bm").textContent="Testo non valido."}
 }
-Object.assign(window,{go,sv,annulla,ed,dl,creaCodice,entra,esci,exp,imp});
+Object.assign(window,{go,sv,annulla,ed,dl,addM,renM,delM,creaCodice,entra,esci,exp,imp});
 
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&CODE&&!ref)connect()});
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
-if(CODE)loadLocal();else D=emptyD();
+if(CODE)loadLocal();
 render();
 connect();
 </script>
